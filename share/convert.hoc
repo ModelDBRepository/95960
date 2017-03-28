@@ -1,0 +1,30 @@
+// ----------------------------------------------------------------------------
+// convert.hoc
+// writes pt3d coordinates to a text file
+// 
+// 2007-07-04, C. Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+// ----------------------------------------------------------------------------
+
+proc WriteMorphoFile() {local i,j localobj f
+	wopen($s1)
+	fprint("S %d A %d\n",n_sections,n_axon)
+	for j=0,n_sections-1 section[j] {		
+		for i=0,n3d()-1 {
+			fprint("S \t%d\t%.8f\t%.8f\t%.8f\t%.8f\n",j,x3d(i),y3d(i),z3d(i),diam3d(i))
+		}
+	}
+	for j=0,n_axon-1 axon[j] {
+		for i=0,n3d()-1 {
+			fprint("A \t%d\t%.8f\t%.8f\t%.8f\t%.8f\n",j,x3d(i),y3d(i),z3d(i),diam3d(i))
+		}
+	}
+	wopen()
+}
+

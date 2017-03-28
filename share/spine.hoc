@@ -1,0 +1,39 @@
+// ----------------------------------------------------------------------------
+// spine.hoc
+// Create a spine with a terminal expansion
+// and a synapse on its tip, as described by Hama et al., 1989
+//
+// 2007-05-30, CSH, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+// ----------------------------------------------------------------------------
+
+// spine:
+create spine[2]
+forsec "spine" {
+	insert pas
+	e_pas = 0
+	cm = actCell.somaLoc.secRef.sec.cm 
+	g_pas = actCell.somaLoc.secRef.sec.g_pas
+	Ra = actCell.somaLoc.secRef.sec.Ra 
+}
+
+spine[0] {
+	// neck:
+	L=0.7
+	diam=0.18
+}
+
+spine [1] {
+	// head:
+	L=0.5
+	diam=0.5	
+}
+
+connect spine[1](0.0), spine[0](1.0)
+

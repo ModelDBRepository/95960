@@ -1,0 +1,7 @@
+---------------------------------------------------------------------
+version 1.1
+2007-10-03, CSH
+-made cell templates adhere to "NetworkReadyCell" syntax
+-spine parameters are updated to current cell values
+-minor code cleanup in share/controlpanel.hoc
+---------------------------------------------------------------------

@@ -1,0 +1,845 @@
+// ----------------------------------------------------------------------------
+// figures.hoc
+// Reproduce simulations and figures
+// Some of this code is based on:
+//
+// share/lib/hoc/impedanx.hoc
+// share/lib/hoc/logax.hoc
+// share/lib/hoc/impratio.hoc
+// share/lib/hoc/stdrun.hoc
+//
+// TODO: 
+// - use range var plots in fig. 7b and 7c, as described in
+//   https://www.neuron.yale.edu/phpBB2/viewtopic.php?p=3322
+//
+// 2007-15-06, Christoph Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+//
+// 2007-10-03: set spine membrane parameters to current cell values.
+//
+// ----------------------------------------------------------------------------
+
+load_file("stdrun.hoc")
+
+// general simulation settings:
+dt = 0.01
+if (accuracy == 0) dt = 0.02
+steps_per_ms = 1/dt
+v_init = 0
+
+// globals
+strdef dir_name,f50_path,atten_path,pltTemplate,templLine,sysCmd
+objref hbox, vbox, imp, rvp[1], g, s, max_epsp_x, recordingSite[1]
+objref termSynapse[1],recording1[1],recording2[1]
+imp = new Impedance()
+f=0
+loc=0
+spine_epsp = 0
+shaft_epsp = 0
+delta_epsp = 0
+
+// create an unconnected spine at global scope:
+xopen("./spine.hoc")
+
+// helper functions
+func ratiox() {local ratio
+	imp.loc($1)
+	imp.compute(0)
+	actCell.somaLoc.secRef.sec ratio = imp.ratio(actCell.somaLoc.loc)
+	return ratio
+}
+
+func ratiof() {local ratio
+	imp.compute($1)
+	actCell.somaLoc.secRef.sec ratio = imp.ratio(actCell.somaLoc.loc)
+	return ratio
+}
+
+obfunc freqVec() {local n,i,logfmin,logfmax,logres localobj retVec
+	logfmin = $1
+	logfmax = $2
+	logres  = $3
+	vecSize = (logfmax-logfmin)/logres
+	retVec = new Vector(vecSize)
+	i = 0
+	for (n = logfmin;n<logfmax;n+=logres) {
+		imp.compute(10^n)
+		actCell.somaLoc.secRef.sec retVec.x(i) = imp.ratio(actCell.somaLoc.loc)
+		i+=1
+	}
+	return retVec
+}
+
+proc createSynapse() {
+	$o1 = new synampa($2)
+	$o1.onset=0 	//ms
+	$o1.tau0=0.2 	//ms
+	$o1.tau1=2.5 	//ms
+	$o1.gmax=1.0e-3 //uS
+	$o1.e=80	//mV (Vrest is 0 mV!)
+}
+
+proc createSmallSynapse() {
+	$o1 = new synampa($2)
+	$o1.onset=0 	//ms
+	$o1.tau0=0.2 	//ms
+	$o1.tau1=2.5 	//ms
+	$o1.gmax=1.0e-4 //uS
+	$o1.e=80	//mV (Vrest is 0 mV!)
+}
+
+// figures
+
+proc fig6a() {local i,maxLength,L50 localobj ppmd,ppms,pathList
+	hbox = new HBox()
+	hbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+	actCell.distalDendLoc.secRef.sec ppmd = new PointProcessMark(1.0)
+	actCell.somaLoc.secRef.sec ppms = new PointProcessMark(actCell.somaLoc.loc)
+	s.point_mark(ppmd,2)
+	s.point_mark(ppms,2)
+	actCell.distalDendLoc.secRef.sec pathList = pathToRootCenter()
+	for i=0,pathList.count()-1 pathList.o(i).secRef.sec if (pathList.o(i).loc==1) s.color(2)
+
+	// attenuation plot:
+	objref rvp[1]
+	if (verbose) print "Starting range var plot creation..."
+	rvp[0] = new RangeVarPlot("ratiox($1)")
+	actCell.somaLoc.secRef.sec {
+		distance(0,actCell.somaLoc.loc)
+		rvp[0].begin(actCell.somaLoc.loc)
+	}
+	actCell.distalDendLoc.secRef.sec {
+		maxLength=distance(1.0)
+		rvp[0].end(1.0)
+	}
+	L50=int(maxLength/50)
+	g = new Graph()
+	g.size(0,(L50+1)*50,0,1)
+	hbox.intercept(0)
+	if (verbose) print "Please wait, it may take some seconds to generate the plot..."
+	hbox.map("Figure 6a",64,64,1024,480)
+	g.addobject(rvp[0])
+	g.label(0.4,0.01,"Distance from soma (um)")
+	g.label(0.01,0.96,"V/Vsoma")
+	g.flush()
+	if (verbose) print "done"
+}
+
+proc fig6b() {local ncolors,i,nsec,orig,percent localobj sl,vclamp
+	hbox = new HBox()
+	hbox.intercept(1)
+
+	// colour-coded attenuation shape plot:
+	sl = new SectionList()
+	sl.wholetree()
+	s = new PlotShape(sl)
+	ncolors=11
+	s.colormap(ncolors,1)
+	// make a colormap ranging from red (no attenuation)
+	// to blue (full attenuation):
+	for i=0,ncolors-1 {
+		s.colormap(i,i/ncolors*255,0,(1-i/ncolors)*255)
+	}
+	s.show(0)
+	s.variable("v")
+	s.exec_menu("Shape Plot")
+	s.scale(0,1)
+	fast_flush_list.append(s)
+
+	// attenuation plot for all sections:
+	nsec=0
+	forall nsec+=1
+	objref rvp[nsec]
+	g = new Graph()
+	g.size(0,800,0,1)
+	actCell.somaLoc.secRef.sec distance()
+	if (verbose) print "Starting range var plot creation..."
+	i=0
+	forsec sl {
+		percent = int(i/nsec*100)
+		if (verbose) print percent, "% done"
+		orig = distance(0) 
+		rvp[i] = new RangeVarPlot("ratiox($1)")
+		rvp[i].begin(0)
+		rvp[i].end(1)
+		rvp[i].origin(orig)
+		g.addobject(rvp[i])
+		i+=1
+	}	
+	g.label(0.4,0.01,"Distance from soma (um)")
+	g.label(0.01,0.96,"V/Vsoma")
+	hbox.intercept(0)
+	if (verbose) print "Please wait, it may take some seconds to generate the plot..."
+	hbox.map("Figure 6b",64,64,1024,480)
+	g.flush()
+	if (verbose) print "done"
+	// run 500 ms:
+	actCell.somaLoc.secRef.sec {
+		vclamp = new SEClamp(actCell.somaLoc.loc)
+		vclamp.amp1 = 1
+		vclamp.dur1 = 500
+		vclamp.rs = 1e-9
+	}
+	tstop = 100
+	if (verbose) print "Starting simulation for shape plot..."
+	finitialize(v_init)
+	run()
+	if (verbose) print "done"
+}
+
+proc fig6c() {local i,x,logfmin,logfmax,logres localobj ppmd,ppms,pathList
+	logfmin = -1
+	logfmax = 4
+	if (accuracy >= 1) {
+		logres = 0.005
+	} else {
+		logres = 0.02
+	}
+
+	hbox = new HBox()
+	hbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+	actCell.distalDendLoc.secRef.sec ppmd = new PointProcessMark(1.0)
+	actCell.somaLoc.secRef.sec ppms = new PointProcessMark(actCell.somaLoc.loc)
+	s.point_mark(ppmd,2)
+	s.point_mark(ppms,2)
+
+	// f-dependent attenuation:
+	if (verbose) print "Please wait, it may take some seconds to generate the plot..."
+	actCell.distalDendLoc.secRef.sec imp.loc(1.0)
+	g = new Graph()
+	g.size(0,3,0,1)
+	g.addexpr("Attenuation vs. log(f)","ratiof(f)")
+	g.label(0.4,0.01,"log10(f(Hz))")
+	g.label(0.01,0.96,"V/Vsoma")
+	g.begin()
+	for (x=logfmin; x <= logfmax; x+=logres) {
+		f = 10^x
+		g.plot(x)
+	}
+
+	hbox.intercept(0)
+	hbox.map("Figure 6c",64,64,1024,480)
+	g.flush()
+	if (verbose) print "done"
+}
+
+proc fig6d() {local i,n_f,n_s,logfmin,logfmax,logres,i50,percent,ret,exitcode localobj pathList,pltFile,pltTemplFile,distances,f50
+	// Attenuation vs. both distance from soma and frequency
+	// creates a script file for gnuplot
+
+	// load plt template:
+	pltTemplate = ""
+	pltTemplFile = new File()
+	pltTemplFile.ropen("./share/template.plt")
+	while (!pltTemplFile.eof()) {
+		ret = pltTemplFile.gets(templLine)
+		if (ret != -1) {
+			sprint(pltTemplate,"%s%s",pltTemplate,templLine)
+		}
+	}
+	pltTemplFile.close()
+
+	pltFile = new File()
+	pltFile.chooser("w", "Select gnuplot script file to write to:", "*.plt", "Accept")
+	if (!pltFile.chooser()) {
+		return
+	}
+	pltFile.printf("%s",pltTemplate)
+	dir_name = pltFile.dir()
+
+	sprint(f50_path,"%sfreqF50.txt",dir_name)
+	sprint(atten_path,"%sfreqAtten.txt",dir_name)
+	if (debug_mode) print "Writing to ",atten_path
+
+	logfmin = 0
+	logfmax = 3
+	if (accuracy >= 1) {
+		logres = 0.005
+	} else {
+		logres = 0.02
+	}
+
+	hbox = new HBox()
+	hbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+	actCell.distalDendLoc.secRef.sec pathList = pathToRootCenter()
+	for i=0,pathList.count()-1 pathList.o(i).secRef.sec if (pathList.o(i).loc==1) s.color(2)
+
+	// attenuation vs. frequency and distance
+	objref recordingSite[pathList.count()]
+	distances = new Vector(pathList.count())
+	f50 = new Vector(pathList.count())
+	actCell.somaLoc.secRef.sec distance(0,actCell.somaLoc.loc)
+	for i=0,pathList.count()-1 pathList.o(i).secRef.sec {
+		imp.loc(pathList.o(i).loc)
+		recordingSite[i] = freqVec(logfmin,logfmax,logres)
+		distances.x(i) = distance(pathList.o(i).loc)	
+		// find f50:
+		i50=whereis(recordingSite[i],recordingSite[i].x(0)/2.0)
+		f50.x(i)=10^(logfmin+i50*logres)
+		percent = int(i/pathList.count()*100)
+		if (verbose) print percent, "% done"
+	}
+
+	// write to files:
+
+	wopen(atten_path)
+	i=0
+	for (n_f=logfmin;n_f<logfmax;n_f+=logres) {
+		for n_s=0,pathList.count()-1 {
+			fprint("%g\t%g\t%g\n",distances.x(n_s),10^n_f,recordingSite[n_s].x(i))
+		}
+		i+=1
+		fprint("\n")
+	}
+	wopen()
+
+	wopen(f50_path)
+	for n_s=0,pathList.count()-1 {
+		if (f50.x(n_s) != 1) {
+			fprint("%g\t%g\t%g\n",distances.x(n_s),f50.x(n_s),0)
+		}
+	}
+	wopen()
+	
+	hbox.intercept(0)
+	hbox.map("Figure 6d",64,64,480,480)
+
+	if (verbose) print "done"
+}
+
+proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj distalSynapse,ppmd,pathList
+	// attenuation of EPSPs evoked by a single distal synapse
+
+	tstop=40
+
+	hbox = new HBox()
+	hbox.intercept(1)
+	vbox = new VBox()
+	vbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+
+	// plot some of the epsps:
+	// copied from stdrun.hoc:	
+	newPlot(0,tstop,0,20)
+	graphItem.save_name("graphList[0].")
+	graphList[0].append(graphItem)
+	graphItem.exec_menu("Keep Lines")
+
+	vbox.intercept(0)
+	vbox.map
+
+	// Walk from distal dendrite to center of soma:
+	actCell.synDendLoc.secRef.sec pathList = pathToRootCenter()
+
+	// distribute recording sites:
+	objref recordingSite[pathList.count()]
+	for i=0,pathList.count()-1 {
+		recordingSite[i] = new Vector()
+		loc = pathList.o(i).loc
+		pathList.o(i).secRef.sec {
+			recordingSite[i].record(&v(loc))
+			graphItem.addvar("v(loc)")
+			if (loc==1) s.color(2)
+		}
+	}
+
+	// attenuation plot:
+	// Couldn't find a way to do this with a range var plot, so
+	// I had to do it manually.
+	// A more efficient and elegant way of doing this is described here:
+	// https://www.neuron.yale.edu/phpBB2/viewtopic.php?p=3322
+	actCell.somaLoc.secRef.sec distance(0,actCell.somaLoc.loc)
+	actCell.synDendLoc.secRef.sec {
+		maxLength=distance(1.0)
+		synLength=distance(actCell.synDendLoc.loc)
+	}
+	L50=int(synLength/50)
+	L50neg=int((synLength-maxLength)/50)
+	g = new Graph()
+	g.size((L50neg-1)*50,(L50+1)*50,0,1)
+	g.label(0.3,0.01,"Distance from synapse (um)")
+	g.label(0.01,0.53,"EPSP/")
+	g.label(0.01,0.47,"EPSPmax")
+
+	hbox.intercept(0)
+	hbox.map("Figure 7ab",64,64,1024,480)
+
+	graphItem.label(0.4,0.01,"Time (ms)")
+	graphItem.label(0.01,0.96,"Vm")
+	graphItem.label(0.01,0.93,"(mV)")
+
+	// insert a synapse:
+	actCell.synDendLoc.secRef.sec createSynapse(distalSynapse,actCell.synDendLoc.loc)
+	s.point_mark(distalSynapse,2)
+
+	// run:
+	if (verbose) print "Running simulation..."
+	finitialize(v_init)
+	run()
+	if (verbose) print "done"
+
+	max_epsp = -1	
+	max_epsp_x = new Vector(pathList.count())
+	for i=0,pathList.count()-1 {
+		max_epsp_x.x[i] = recordingSite[i].max()
+		if (max_epsp <= max_epsp_x.x[i]) {
+			max_epsp = max_epsp_x.x[i]
+		}
+	}
+	if (debug_mode) print "maximal epsp amplitude: ", max_epsp, " mV"
+	g.beginline()
+	for i=0,pathList.count()-1 {
+		g.line(synLength-pathList.o(i).distToRootCenter,max_epsp_x.x[i]/max_epsp)
+	}
+	g.flush()
+	s.exec_menu("View = plot")
+	distalSynapse.gmax = 0		
+	for i=0,pathList.count()-1 recordingSite[i].play_remove()
+	if (verbose) print "done"
+}
+
+proc fig7ac() {local i,maxLength,L50,dist,synStep localobj movingSynapse,ppmd,pathList
+	// Somatic EPSP amplitude vs. synapse location
+
+	tstop = 40
+	breakall = 0
+	hbox = new HBox()
+	hbox.intercept(1)
+	vbox = new VBox()
+	vbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+
+	// plot epsps (copied from stdrun.hoc):
+	newPlot(0,tstop,0,3)
+	graphItem.save_name("graphList[0].")
+	graphList[0].append(graphItem)
+	graphItem.exec_menu("Keep Lines")
+
+	vbox.intercept(0)
+	vbox.map
+
+	graphItem.label(0.4,0.01,"Time (ms)")
+	graphItem.label(0.01,0.96,"Vm, soma")
+	graphItem.label(0.01,0.93,"(mV)")
+
+	// attenuation plot:
+	// Couldn't find a way to do this with a range var plot, so
+	// I had to do it manually. There might be more elegant ways, though.
+	// A more efficient and elegant way of doing this is described here:
+	// https://www.neuron.yale.edu/phpBB2/viewtopic.php?p=3322
+
+	actCell.somaLoc.secRef.sec distance(0,actCell.somaLoc.loc)
+	actCell.synDendLoc.secRef.sec {
+		maxLength=distance(1.0)
+	}
+	L50=int(maxLength/50)
+	g = new Graph()
+	g.size(0,(L50+1)*50,0,3)
+	g.begin()
+	g.addvar("Somatic EPSP amplitude vs. distance from soma","max_epsp")
+	g.label(0.4,0.01,"Distance from soma (um)")
+	g.label(0.01,0.96,"EPSPsoma")
+	g.label(0.01,0.93,"(mV)")
+
+	// Walk from distal dendrite to center of soma:
+	actCell.synDendLoc.secRef.sec pathList = pathToRootCenter()
+	if (debug_mode) printf("There are %g synaptic sites\n",pathList.count())
+
+	hbox.intercept(0)
+	hbox.map("Figure 7ac",64,64,1024,480)
+
+	// distribute synapses:
+	synStep = 10 // lower this number for higher accuracy
+	objref recordingSite[1]
+	for (i=0; i < pathList.count() && breakall == 0; i+=synStep) {
+		pathList.o(i).secRef.sec {
+			if (verbose) print "Running simulation #",int((i/synStep)+1),"of ",int(pathList.count()/synStep+1)	
+			createSynapse(movingSynapse,pathList.o(i).loc)
+			s.point_mark(movingSynapse,2)
+			recordingSite[0] = new Vector()
+			loc = actCell.somaLoc.loc
+			actCell.somaLoc.secRef.sec recordingSite[0].record(&v(loc))
+			graphItem.addexpr("","actCell.somaLoc.secRef.sec.v(loc)")
+			finitialize(v_init)
+			run()
+			s.exec_menu("View = plot")
+			max_epsp = recordingSite[0].max()
+			recordingSite[0].play_remove() // don't know if this is really needed here
+			dist = pathList.o(i).distToRootCenter
+			g.plot(dist)
+			g.fastflush()
+		}
+	}
+	s.exec_menu("View = plot")
+	movingSynapse.gmax = 0
+	breakall = 0
+	if (verbose) print "done"
+}
+
+proc fig7de() {local neckStep,l_neck localobj spineSynapse
+	// EPSP amplitudes vs. spine neck length
+
+	tstop=20
+	breakall = 0
+
+	// connect spine to proximal dendrite:
+	actCell.proxDendLoc.secRef.sec connect spine[0](0), actCell.proxDendLoc.loc
+
+    // adjust parameters:
+    forsec "spine" {
+        cm =  actCell.proxDendLoc.secRef.sec.cm
+        g_pas = actCell.proxDendLoc.secRef.sec.g_pas
+        Ra = actCell.proxDendLoc.secRef.sec.Ra
+    }
+
+	hbox = new HBox()
+	hbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+
+	// plot epsps (copied from stdrun.hoc):
+	newPlot(0,tstop,0,14)
+	graphItem.save_name("graphList[0].")
+	graphList[0].append(graphItem)
+	graphItem.exec_menu("Keep Lines")
+
+	graphItem.label(0.4,0.01,"Time (ms)")
+	graphItem.label(0.01,0.96,"Vm")
+	graphItem.label(0.01,0.93,"(mV)")
+
+	// EPSP amplitudes vs. neck length:
+	g = new Graph()
+	g.size(0,2.5,0,15)
+	g.begin()
+	g.addvar("","spine_epsp",2,1)
+	g.addvar("","shaft_epsp",2,16)
+	g.label(0.4,0.01,"Neck length (um)")
+	g.label(0.01,0.96,"EPSP")
+	g.label(0.01,0.93,"(mV)")
+
+	hbox.intercept(0)
+	hbox.map("Figure 7de",64,64,1024,480)
+	s.exec_menu("View = plot")
+
+	// synapse on spine head:
+	spine[1] createSynapse(spineSynapse,1.0)
+	s.point_mark(spineSynapse,2)
+
+	// record in spine head and shaft:
+	objref recordingSite[2]
+	recordingSite[0] = new Vector()
+	recordingSite[1] = new Vector()
+	spine[1] recordingSite[0].record(&v(1.0))
+	actCell.proxDendLoc.secRef.sec recordingSite[1].record(&v(actCell.proxDendLoc.loc))
+	if (accuracy >= 1) {
+		neckStep = 0.05
+	} else {
+		neckStep = 0.2
+	}
+	neckStep = 0.2 // lower this number for higher accuracy
+	for (l_neck=1e-9; l_neck < 2.3 && breakall == 0; l_neck += neckStep) {
+		if (verbose) print "Running simulation with a spine neck length of ",l_neck,"um..."
+		spine[0].L = l_neck
+		loc = actCell.proxDendLoc.loc
+		graphItem.addexpr("","actCell.proxDendLoc.secRef.sec.v(loc)",2,16)
+		graphItem.addexpr("","spine[1].v(1)",2,1)
+		finitialize(v_init)
+		run()
+		spine_epsp = recordingSite[0].max()
+		shaft_epsp = recordingSite[1].max()
+		g.plot(l_neck)
+		g.fastflush()
+	}
+	recordingSite[0].play_remove() // don't know if this is really needed here
+	recordingSite[1].play_remove() 
+	spineSynapse.gmax = 0
+
+	// disconnect spine:
+	spine[0] disconnect()
+	breakall = 0
+	if (verbose) print "done"
+}
+
+proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synapse1,synapse2
+	// local EPSP summation window
+
+	tstop=210
+	breakall = 0
+
+	// create two distal synapses at the same location:
+	actCell.synDendLoc.secRef.sec createSynapse(synapse1,actCell.synDendLoc.loc)
+	actCell.synDendLoc.secRef.sec createSynapse(synapse2,actCell.synDendLoc.loc)
+		
+	hbox = new HBox()
+	hbox.intercept(1)
+	vbox = new VBox()
+	vbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+	s.point_mark(synapse1,2)
+
+	// plot epsps (copied from stdrun.hoc):
+	newPlot(0,tstop,0,30)
+	graphItem.save_name("graphList[0].")
+	graphList[0].append(graphItem)
+	graphItem.exec_menu("Keep Lines")
+
+	vbox.intercept(0)
+	vbox.map
+
+	graphItem.label(0.4,0.01,"Time (ms)")
+	graphItem.label(0.01,0.96,"Vm")
+	graphItem.label(0.01,0.93,"(mV)")
+
+	// coincidence window:
+	g = new Graph()
+	g.size(-100,100,0,15)
+	g.begin()
+	g.addvar("","delta_epsp")
+	g.label(0.4,0.01,"delta t (ms)")
+	g.label(0.01,0.96,"delta EPSP")
+	g.label(0.01,0.93,"(mV)")
+
+	hbox.intercept(0)
+	hbox.map("Figure 8ab",64,64,1024,480)
+	s.exec_menu("View = plot")
+
+	// record locally in distal dendrite:
+	objref recordingSite[1]
+	recordingSite[0] = new Vector()
+	actCell.synDendLoc.secRef.sec recordingSite[0].record(&v(actCell.synDendLoc.loc))
+
+	if (accuracy >= 1) {
+		timeStep = 2.0
+	} else {
+		timeStep = 10.0
+	}
+	synapse1.onset=0 //ms
+	synapse2.onset=100
+	
+	// run a single epsp to determine the amplitude:
+	if (verbose) print "Running simulation for single epsp" 	
+	tstop_old = tstop
+	tstop = 50
+	finitialize(v_init)
+	run()
+	single_epsp = recordingSite[0].max()
+	tstop = tstop_old	
+	for (onset=0; onset <= 200 && breakall == 0; onset += timeStep) {
+		synapse1.onset = onset
+		delta_t = synapse1.onset-synapse2.onset
+		if (delta_t == -20) {
+			timeStep /= 4
+			if (verbose) print "Decreasing interval to ",timeStep,"ms"
+		}
+		if (delta_t == 20) {
+			timeStep *= 4
+			if (verbose) print "Increasing interval back to ",timeStep,"ms"
+		}
+		if (verbose) print "Running simulation with delta t = ",delta_t,"ms"
+		loc = actCell.synDendLoc.loc
+		graphItem.addexpr("","actCell.synDendLoc.secRef.sec.v(loc)")
+		finitialize(v_init)
+		run()
+		s.exec_menu("View = plot")
+		delta_epsp = recordingSite[0].max()-single_epsp
+		g.plot(delta_t)
+		g.fastflush()
+	}
+	recordingSite[0].play_remove() // don't know if this is really needed here
+
+	synapse1.gmax = 0
+	synapse2.gmax = 0
+
+	// disconnect spine:
+	spine[0] disconnect()
+	breakall = 0
+	if (verbose) print "done"
+}
+
+proc fig8cd() {local i,maxLength1,maxLength2,synLength1,synLength2,max_epsp localobj terminalList,pathList1,pathList2
+	// attenuation of distributed synaptic input
+	tstop=40
+
+	// get terminal dendrites:
+	terminalList = termList(PROXDIST,actCell.somaLoc.secRef)
+
+	hbox = new HBox()
+	hbox.intercept(1)
+	vbox = new VBox()
+	vbox.intercept(1)
+
+	// shape plot:
+	s = new Shape()
+	// show synapses:
+	objref termSynapse[terminalList.count()]
+	for i=0,terminalList.count()-1 terminalList.o(i).sec {
+		createSmallSynapse(termSynapse[i],actCell.synDendLoc.loc)
+		s.point_mark(termSynapse[i],2)
+	}
+	if (verbose) print "Distributed ",terminalList.count(),"distal synapses"
+
+	// plot epsps
+	// copied from stdrun.hoc:	
+	newPlot(0,tstop,0,3)
+	graphItem.save_name("graphList[0].")
+	graphList[0].append(graphItem)
+	graphItem.exec_menu("Keep Lines")
+
+	vbox.intercept(0)
+	vbox.map
+
+	// create 2 paths:
+	actCell.synDendLoc.secRef.sec pathList1 = pathToRootCenter()
+	actCell.distalDendLoc.secRef.sec pathList2 = pathToRootCenter()
+	// recording vectors:
+	objref recording1[pathList1.count()]
+	objref recording2[pathList2.count()]
+	for i=0,pathList1.count()-1 pathList1.o(i).secRef.sec {
+		recording1[i] = new Vector()
+		loc = pathList1.o(i).loc
+		recording1[i].record(&v(loc))
+		graphItem.addvar("v(loc)")
+		if (loc==1) s.color(2)
+	}		
+	for i=0,pathList2.count()-1 pathList2.o(i).secRef.sec {
+		recording2[i] = new Vector()
+		loc = pathList2.o(i).loc
+		recording2[i].record(&v(loc))
+		if (loc==1) s.color(4)
+	}
+
+	// attenuation plot:
+	actCell.somaLoc.secRef.sec distance(0,actCell.somaLoc.loc)
+	actCell.synDendLoc.secRef.sec {
+		maxLength1 = distance(1.0)
+		synLength1 = distance(actCell.synDendLoc.loc)
+	}
+	actCell.distalDendLoc.secRef.sec {
+		maxLength2 = distance(1.0)
+		synLength2 = distance(actCell.distalDendLoc.loc)
+	}
+	if (maxLength1 < maxLength2) maxLength1 = maxLength2
+	L50=int(maxLength1/50)
+	g = new Graph()
+	g.size(0,(L50+1)*50,0,1)
+	g.exec_menu("Keep Lines")			
+	hbox.intercept(0)
+	hbox.map("Figure 8c,d",64,64,1024,480)
+	s.exec_menu("View = plot")
+
+	graphItem.label(0.4,0.01,"Time (ms)")
+	graphItem.label(0.01,0.96,"EPSP")
+	graphItem.label(0.01,0.93,"(mV)")
+
+	g.label(0.4,0.01,"Distance from synapse (um)")
+	g.label(0.01,0.96,"EPSP/")
+	g.label(0.01,0.93,"EPSPmax")
+
+	// run simulation:
+	if (verbose) print "Starting simulation..."
+	finitialize(v_init)
+	run()
+	s.exec_menu("View = plot")
+	if (verbose) print "done"
+
+	// update attenuation plot:
+	max_epsp_x = new Vector(pathList1.count())
+	max_epsp = -1	
+	for i=0,pathList1.count()-1 {
+		max_epsp_x.x[i] = recording1[i].max()
+		if (max_epsp <= max_epsp_x.x[i]) {
+			max_epsp = max_epsp_x.x[i]
+		}
+	}
+	if (debug_mode) print "maximal epsp amplitude in path 1: ", max_epsp, " mV"
+	g.beginline(2,1) // red
+	for i=0,pathList1.count()-1 {
+		g.line(synLength1-pathList1.o(i).distToRootCenter,max_epsp_x.x[i]/max_epsp)
+	}
+
+	max_epsp_x = new Vector(pathList2.count())
+	max_epsp = -1	
+	for i=0,pathList2.count()-1 {
+		max_epsp_x.x[i] = recording2[i].max()
+		if (max_epsp <= max_epsp_x.x[i]) {
+			max_epsp = max_epsp_x.x[i]
+		}
+	}
+	if (debug_mode) print "maximal epsp amplitude in path 2: ", max_epsp, " mV"
+	g.beginline(4,1) // green
+	for i=0,pathList2.count()-1 {
+		g.line(synLength2-pathList2.o(i).distToRootCenter,max_epsp_x.x[i]/max_epsp)
+	}
+	g.flush()
+	for i=0,pathList1.count()-1 recording1[i].play_remove()
+	for i=0,pathList2.count()-1 recording2[i].play_remove()
+	
+	// delete[]:
+	objref termSynapse[1]
+}
+
+proc ststAttenuation() {local i, sumAtten localobj terminalList
+	sumAtten = 0
+	// get terminal dendrites:
+	terminalList = termList(0,actCell.somaLoc.secRef)
+	for i=0, terminalList.count()-1 terminalList.o(i).sec {
+		sumAtten += ratiox(1.0)
+	}		
+	print "Mean steady-state attenuation in this cell (",terminalList.count(),"dendritic tips): ",sumAtten/terminalList.count()
+}
+
+proc f50Attenuation() {local i,sumAtten,logfmin,logfmax,logres,vecSize,i50,f50 localobj terminalList,sumVec
+	logfmin = -1
+	logfmax = 4
+	if (accuracy >= 1) {
+		logres = 0.01
+	} else {
+		logres = 0.05
+	}
+
+	// a vector to sum up f-dependent attenuation in all dendritic tips:
+	vecSize=(logfmax-logfmin)/logres
+	sumVec=new Vector(vecSize,0.0)
+
+	// calculate ratio in all terminal dendritic tips:
+	terminalList = termList(PROXDIST,actCell.somaLoc.secRef)
+	for i=0, terminalList.count()-1 terminalList.o(i).sec {
+		imp.loc(1.0)
+		sumVec.add(freqVec(logfmin,logfmax,logres))
+		if (verbose) print int((i+1)/terminalList.count()*100),"% done"
+	}
+
+	// get the average:
+	sumVec.div(terminalList.count())
+
+	// find f50:
+	i50=whereis(sumVec,sumVec.x(0)/2.0)
+	f50=10^(logfmin+i50*logres)
+
+	print "Mean half-maximal frequency (",terminalList.count(),"dendritic tips) in this cell is ",f50," Hz"
+}
+
+
+

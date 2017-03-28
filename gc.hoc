@@ -1,0 +1,25 @@
+// ----------------------------------------------------------------------------
+// gc.hoc
+// Initialize simulations
+//
+// 2007-06-15, Christoph Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+// ----------------------------------------------------------------------------
+
+// includes:
+load_file("./share/config.hoc")
+load_file("./share/controlpanel.hoc")
+
+// choose and load cell:
+choose_cell()
+
+// show control panel:
+load_file("./share/figures.hoc")
+panels()
+

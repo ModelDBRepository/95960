@@ -1,0 +1,223 @@
+// ----------------------------------------------------------------------------
+// membrane.hoc
+// loads the full cell morphology, inserts passive
+// membrane properties, corrects membrane resistance
+// and capacitance for spines, and corrects (roughly) 
+// for temperature if needed
+//
+// 2007-06-17, Christoph Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+//
+// 2007-08-31: adheres to NetworkReadyCell policy
+//
+// ----------------------------------------------------------------------------
+
+// load gui or stdrun:
+load_file("stdrun.hoc")
+
+load_file("./../share/genutils.hoc")
+load_file("./../share/calcSpines.hoc")
+load_file("./../share/fixnseg.hoc")
+
+begintemplate cell_3
+
+public is_art
+public init, topol, basic_shape, subsets, geom, biophys, geom_nseg, biophys_inhomo
+public synlist, x, y, z, position, connect2target
+public somaLoc,distalDendLoc,proxDendLoc,synDendLoc,spineCount,n_sections,n_axon
+public section
+public all,den,axo
+
+external verbose,debug_mode,accuracy,calc_spines
+external q10_cm,q10_g_pas,q10_Ra,tempScale,geom_nseg_shared,lambda_f
+
+objref somaLoc,distalDendLoc,proxDendLoc,synDendLoc,spineCount,this,synlist
+
+proc init() {
+	topol()
+	if (debug_mode) print "Loaded cell, n_sections=",n_sections
+	subsets()
+	geom()
+	biophys()
+	geom_nseg()
+	synlist = new List()
+	synapses()
+	x = y = z = 0 // only change via position
+	n_sections = 0
+	n_axon = 0
+}
+
+// dummy compartments, will be updated later:
+create section[1]
+
+proc init_spines() {
+	forall insert spines
+        section[0] scale_spines = 1.0
+        section[1] scale_spines = 1.0
+        section[2] scale_spines = 1.0
+        section[3] scale_spines = 1.929288259
+        section[4] scale_spines = 2.212078154
+        section[5] scale_spines = 2.341560243
+        section[6] scale_spines = 2.233479813
+        section[7] scale_spines = 1.992290155
+        section[8] scale_spines = 1.992352015
+        section[9] scale_spines = 2.375545093
+        section[10] scale_spines = 2.283484004
+        section[11] scale_spines = 2.33647465
+        section[12] scale_spines = 1.990855143
+        section[13] scale_spines = 2.271971997
+        section[14] scale_spines = 2.252074842
+        section[15] scale_spines = 2.30114356
+        section[16] scale_spines = 2.224684495
+        section[17] scale_spines = 1.0
+        section[18] scale_spines = 1.624189052
+        section[19] scale_spines = 1.735728483
+        section[20] scale_spines = 1.990921779
+        section[21] scale_spines = 2.218278915
+        section[22] scale_spines = 2.088290883
+        section[23] scale_spines = 2.060724129
+        section[24] scale_spines = 1.993072529
+        section[25] scale_spines = 2.273567276
+        section[26] scale_spines = 2.55698069
+        section[27] scale_spines = 2.349088677
+        section[28] scale_spines = 2.27185729
+        section[29] scale_spines = 2.069811921
+        section[30] scale_spines = 2.256319669
+        section[31] scale_spines = 2.3078512
+        section[32] scale_spines = 1.0
+}
+
+proc init_pas() {
+	forall {
+		insert pas
+		e_pas=0
+		cm = 0.898561 * tempScale(q10_cm) * scale_spines
+		g_pas = 2.22614e-05 * tempScale(q10_g_pas) * scale_spines
+		Ra = 92.988 * tempScale(q10_Ra)
+	}
+}
+
+proc basic_shape() {localobj morphoFile
+	strdef sectionLabel
+	morphoFile = new File()
+	morphoFile.ropen("./cell_3/morpho.txt")
+	n_sections = morphoFile.scanvar()
+	
+	create section[n_sections]
+	n_axon = morphoFile.scanvar()
+	forall pt3dclear()
+	while (!morphoFile.eof()) {
+		morphoFile.scanstr(sectionLabel)
+		if (strcmp(sectionLabel,"S")==0) { 
+			section[morphoFile.scanvar()] pt3dadd(morphoFile.scanvar(),morphoFile.scanvar(),morphoFile.scanvar(),morphoFile.scanvar())
+		} else {
+			print "Unknown section label, aborting file import"
+			return
+		}
+	}
+	morphoFile.close()
+	// define soma:
+	section[1]  somaLoc = new Location(0.0)
+	// define dendritic sites:
+	section[16] distalDendLoc = new Location(0.8)
+	section[2] proxDendLoc = new Location(0.05)
+	section[27] synDendLoc = new Location(0.8)
+
+	access somaLoc.secRef.sec
+}
+
+proc topol() {
+	basic_shape()
+
+        connect section[1](0), section[0](0)
+        connect section[2](0), section[1](1)
+        connect section[3](0), section[2](1)
+        connect section[4](0), section[3](1)
+        connect section[5](0), section[4](1)
+        connect section[6](0), section[4](1)
+        connect section[7](0), section[3](1)
+        connect section[8](0), section[7](1)
+        connect section[9](0), section[8](1)
+        connect section[10](0), section[8](1)
+        connect section[11](0), section[7](1)
+        connect section[12](0), section[2](1)
+        connect section[13](0), section[12](1)
+        connect section[14](0), section[12](1)
+        connect section[15](0), section[14](1)
+        connect section[16](0), section[14](1)
+        connect section[17](0), section[1](1)
+        connect section[18](0), section[17](1)
+        connect section[19](0), section[18](1)
+        connect section[20](0), section[19](1)
+        connect section[21](0), section[20](1)
+        connect section[22](0), section[20](1)
+        connect section[23](0), section[19](1)
+        connect section[24](0), section[18](1)
+        connect section[25](0), section[24](1)
+        connect section[26](0), section[25](1)
+        connect section[27](0), section[25](1)
+        connect section[28](0), section[24](1)
+        connect section[29](0), section[17](1)
+        connect section[30](0), section[29](1)
+        connect section[31](0), section[29](1)
+        connect section[32](0), section[0](1)
+	
+	init_spines()
+}
+
+objref all,den,axo
+proc subsets() { local i
+  objref all,den,axo
+  all = new SectionList()
+    for i=0, n_sections-1 section[i] all.append()
+  den = new SectionList()
+    for i=0, n_sections-1 if (i!= 1 && i != 32) section[i] den.append()
+  axo = new SectionList()
+    section[32] axo.append()
+}
+
+proc geom() {
+}
+
+proc geom_nseg() {
+	geom_nseg_shared()
+	// increase nseg even further (tribute to Josef):
+	if (accuracy >= 1) {
+		forall nseg*=3
+	}
+}
+
+proc biophys() {
+	init_pas()
+}
+
+proc biophys_inhomo(){}
+
+proc position() { local i
+  somaLoc.secRef.sec for i = 0, n3d()-1 {
+    pt3dchange(i, $1-x+x3d(i), $2-y+y3d(i), $3-z+z3d(i), diam3d(i))
+  }
+  x = $1  y = $2  z = $3
+}
+
+obfunc connect2target() { localobj nc //$o1 target point process, optional $o2 returned NetCon
+  section[32] nc = new NetCon(&v(0), $o1)
+  nc.threshold = 10
+  if (numarg() == 2) { $o2 = nc } // for backward compatibility
+  return nc
+}
+
+objref syn_
+proc synapses() {
+}
+
+func is_art() { return 0 }
+
+endtemplate cell_3
+

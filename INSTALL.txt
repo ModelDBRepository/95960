@@ -1,0 +1,34 @@
+Installation instructions
+=========================
+
+1. Download and install NEURON
+   The latest version can be found at
+   http://www.neuron.yale.edu/neuron/install/install.html
+2. Download and install gnuplot 4.2 (optional)
+   http://www.gnuplot.info
+
+Windows:
+3. Unzip gc-1.1.zip into a folder
+4. Compile the mod-files in this folder with mknrndll
+   (Start/Programs/Neuron)
+5. Double-click on gc.hoc
+
+Unix or GNU/Linux:
+3. Unzip / untar gc-1.1.zip or gc-1.1.tar.gz or gc-1.1.tar.bz2
+   to a folder
+4. Compile the mod-files in this folder using nrnivmodl. If it's 
+   not in your path, you can typically find it in
+   /usr/local/nrn/host_cpu/bin/nrnivmodl, where host_cpu is
+   your processor type (such as i686). 
+5. Start NEURON using
+   ./host_cpu/special
+6. At the oc> prompt, type
+   xopen("gc.hoc")
+
+MAC OS X:
+3. Unzip gc-1.1.zip by double clicking on it.
+4. Drag the gc-1.1 folder to the mknrndll icon in the NEURON
+   application folder.
+5. Drag the mosinit.hoc file in the gc-1.0 folder to the nrngui
+   icon in the NEURON application folder.
+   

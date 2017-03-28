@@ -1,0 +1,188 @@
+// ----------------------------------------------------------------------------
+// controlpanel.hoc
+// Create a control panel to reproduce figures and values
+//
+// 2007-15-06, Christoph Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+//
+// 2007-10-03: local variables in morpho_info() were declared in changed_cell()
+//
+// ----------------------------------------------------------------------------
+
+strdef cell_name,h_cell_name,path_name,cellno,cmd
+ncells = 8
+objref actCell
+curCellIndex = -1
+defaultCellIndex = 6
+breakall = 0
+
+begintemplate Figure
+public label, funcname, description
+strdef label, funcname, description
+
+proc init() {
+	label = $s1
+	funcname = $s2
+	if (numarg() > 2) {
+		description = $s3
+	}
+}	
+	
+endtemplate Figure
+
+begintemplate CellButton
+public label, state
+strdef label
+
+proc init() {
+	sprint(label,"Cell %d",$1+1)
+	state = $2
+}
+
+endtemplate CellButton
+
+objref FigureList
+FigureList = new List()
+FigureList.append(new Figure("Figure 6a","fig6a()", \
+                             "Steady-state attenuation against distance from soma"))
+FigureList.append(new Figure("Figure 6b","fig6b()", \
+                             "Colour-coded shape plot of steady-state attenuation"))
+FigureList.append(new Figure("Figure 6c","fig6c()", \
+                             "Frequency-dependent attenuation in a dendritic tip"))
+FigureList.append(new Figure("Figure 6d","fig6d()", \
+                             "Attenuation against both distance from soma and frequency (generates a gnuplot-script)"))
+FigureList.append(new Figure("Steady-state attenuation","ststAttenuation()", \
+                             "Average steady-state attenuation in all dendritic tips"))
+FigureList.append(new Figure("Half-maximal frequency","f50Attenuation()", \
+			     "Average frequency at which half-maximal attenuation occurs in all dendritic tips"))
+FigureList.append(new Figure("Figure 7ab","fig7ab()", \
+                             "Attenuation of single EPSPs against distance from soma"))
+FigureList.append(new Figure("Figure 7ac","fig7ac()", \
+                             "Somatic EPSP amplitude against distance of synapse from soma"))
+FigureList.append(new Figure("Figure 7de","fig7de()", \
+                             "Influence of spine morphology on EPSP waveform"))
+FigureList.append(new Figure("Figure 8ab","fig8ab()", \
+			     "Temporal summation of EPSPs"))
+FigureList.append(new Figure("Figure 8cd","fig8cd()", \
+			     "Spatial summation of EPSPs"))
+
+objref CellButtonList
+CellButtonList = new List()
+for i=0, ncells-1 {
+	if (i == defaultCellIndex) {
+		CellButtonList.append(new CellButton(i,1))
+	} else {
+		CellButtonList.append(new CellButton(i,0))
+	}
+}
+
+objref vboxP, vboxP2, hboxP, sP, hboxPFig[FigureList.count()]
+
+proc panels() {
+	choose_fig()
+	stop_button()
+	vboxP.intercept(0)
+	vboxP.map
+	sP.exec_menu("View = plot")
+}
+
+proc choose_fig() {local n_f
+	for n_f=0, FigureList.count()-1 {
+		xpanel(" ",1)
+		xbutton(FigureList.o[n_f].label, FigureList.o[n_f].funcname)
+		xlabel(FigureList.o[n_f].description)
+		xpanel()
+	}
+}
+
+proc stop_all() {
+	stoprun = 1
+	breakall = 1
+}
+
+proc stop_button() {
+	xpanel("Stop simulation")
+	xbutton("Stop current simulation", "stop_all()")
+	xpanel()
+}
+
+proc choose_cell() {local i
+	vboxP = new VBox()
+	vboxP.intercept(1)
+	hboxP = new HBox()
+	hboxP.intercept(1)
+	vboxP2 = new VBox()
+	vboxP2.intercept(1)
+	xpanel("Choose cell")
+	for i=0, CellButtonList.count()-1 {
+		xcheckbox(CellButtonList.o(i).label,&CellButtonList.o(i).state,"changed_cell()")		
+	}
+	xpanel()
+	vboxP2.intercept(0)
+	vboxP2.map
+	sP = new Shape()
+	changed_cell()
+	hboxP.intercept(0)
+	hboxP.map
+}
+
+proc changed_cell() {local i, storeIndex, allUnchecked 
+	// load new cell if changed from another cell:
+	allUnchecked = 1
+	storeIndex = curCellIndex
+	for i=0, CellButtonList.count()-1 {
+		// previous selection:
+		if (i == curCellIndex && CellButtonList.o(i).state == 1) {
+			CellButtonList.o(i).state = 0
+		}
+		// new selection:
+		if (i != curCellIndex && CellButtonList.o(i).state == 1) {
+			sprint(cell_name,"cell_%d",i+1)
+			sprint(path_name,"./%s/membrane.hoc",cell_name)
+			load_file(path_name)
+			sprint(cmd,"actCell = new %s()",cell_name)
+			execute(cmd)
+			storeIndex = i
+			allUnchecked = 0
+		}
+	}
+	// correct an attempt to uncheck all:
+	if (allUnchecked) {
+		CellButtonList.o(curCellIndex).state = 1
+	}	
+	sP.flush()
+	sP.exec_menu("View = plot")
+
+	curCellIndex = storeIndex
+
+	morpho_info()
+}
+
+proc morpho_info() {local totalArea, totalAreaShaft, n_spines, secAreaShaft
+	if (verbose) {
+		print "------------------------------------------------------------------"
+		print "Loaded ",cell_name
+		print "Corrected number of spines: ", numRealSpines()	
+		n_spines = 0
+		forsec "section" n_spines += count_spines
+		if (debug_mode) print "Corrected number of spines (from spine counts): ", n_spines
+		totalArea = 0
+		forsec "axon" totalArea += secArea()
+		totalAreaShaft = totalArea
+		forsec "section" {
+			secAreaShaft = secArea()
+			totalArea += secAreaShaft*scale_spines
+			totalAreaShaft += secAreaShaft
+		}
+		print "Total cell surface area without spines: ", totalAreaShaft,"um^2"
+		print "Total cell surface area including spines: ", totalArea,"um^2"
+		print "Area factor: ", totalArea / totalAreaShaft
+		print "------------------------------------------------------------------"
+	}	
+}

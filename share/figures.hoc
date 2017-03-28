@@ -31,7 +31,6 @@ load_file("stdrun.hoc")
 dt = 0.01
 if (accuracy == 0) dt = 0.02
 steps_per_ms = 1/dt
-v_init = 0
 
 // globals
 strdef dir_name,f50_path,atten_path,pltTemplate,templLine,sysCmd
@@ -50,13 +49,21 @@ xopen("./spine.hoc")
 // helper functions
 func ratiox() {local ratio
 	imp.loc($1)
-	imp.compute(0)
+	if (strcmp(cell_name, "cell_11") == 0) {
+	    imp.compute(0, 1)
+	} else {
+	    imp.compute(0)
+	}
 	actCell.somaLoc.secRef.sec ratio = imp.ratio(actCell.somaLoc.loc)
 	return ratio
 }
 
 func ratiof() {local ratio
-	imp.compute($1)
+	if (strcmp(cell_name, "cell_11") == 0) {
+	    imp.compute($1, 1)
+	} else {
+	    imp.compute($1)
+	}
 	actCell.somaLoc.secRef.sec ratio = imp.ratio(actCell.somaLoc.loc)
 	return ratio
 }
@@ -69,7 +76,11 @@ obfunc freqVec() {local n,i,logfmin,logfmax,logres localobj retVec
 	retVec = new Vector(vecSize)
 	i = 0
 	for (n = logfmin;n<logfmax;n+=logres) {
-		imp.compute(10^n)
+                if (strcmp(cell_name, "cell_11") == 0) {
+                    imp.compute(10^n, 1)
+		} else {
+                    imp.compute(10^n)
+                }
 		actCell.somaLoc.secRef.sec retVec.x(i) = imp.ratio(actCell.somaLoc.loc)
 		i+=1
 	}
@@ -82,7 +93,7 @@ proc createSynapse() {
 	$o1.tau0=0.2 	//ms
 	$o1.tau1=2.5 	//ms
 	$o1.gmax=1.0e-3 //uS
-	$o1.e=80	//mV (Vrest is 0 mV!)
+	$o1.e=v_init+80	//mV (Vrest is 0 mV!)
 }
 
 proc createSmallSynapse() {
@@ -91,12 +102,17 @@ proc createSmallSynapse() {
 	$o1.tau0=0.2 	//ms
 	$o1.tau1=2.5 	//ms
 	$o1.gmax=1.0e-4 //uS
-	$o1.e=80	//mV (Vrest is 0 mV!)
+	$o1.e=v_init+80	//mV (Vrest is 0 mV!)
 }
 
 // figures
 
 proc fig6a() {local i,maxLength,L50 localobj ppmd,ppms,pathList
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	hbox = new HBox()
 	hbox.intercept(1)
 
@@ -135,6 +151,11 @@ proc fig6a() {local i,maxLength,L50 localobj ppmd,ppms,pathList
 }
 
 proc fig6b() {local ncolors,i,nsec,orig,percent localobj sl,vclamp
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	hbox = new HBox()
 	hbox.intercept(1)
 
@@ -166,7 +187,7 @@ proc fig6b() {local ncolors,i,nsec,orig,percent localobj sl,vclamp
 	i=0
 	forsec sl {
 		percent = int(i/nsec*100)
-		if (verbose) print percent, "% done"
+		if (verbose) printf("%d %% done\r", percent)
 		orig = distance(0) 
 		rvp[i] = new RangeVarPlot("ratiox($1)")
 		rvp[i].begin(0)
@@ -174,7 +195,8 @@ proc fig6b() {local ncolors,i,nsec,orig,percent localobj sl,vclamp
 		rvp[i].origin(orig)
 		g.addobject(rvp[i])
 		i+=1
-	}	
+        }
+	if (verbose) print ""    
 	g.label(0.4,0.01,"Distance from soma (um)")
 	g.label(0.01,0.96,"V/Vsoma")
 	hbox.intercept(0)
@@ -197,6 +219,11 @@ proc fig6b() {local ncolors,i,nsec,orig,percent localobj sl,vclamp
 }
 
 proc fig6c() {local i,x,logfmin,logfmax,logres localobj ppmd,ppms,pathList
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	logfmin = -1
 	logfmax = 4
 	if (accuracy >= 1) {
@@ -236,6 +263,11 @@ proc fig6c() {local i,x,logfmin,logfmax,logres localobj ppmd,ppms,pathList
 }
 
 proc fig6d() {local i,n_f,n_s,logfmin,logfmax,logres,i50,percent,ret,exitcode localobj pathList,pltFile,pltTemplFile,distances,f50
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	// Attenuation vs. both distance from soma and frequency
 	// creates a script file for gnuplot
 
@@ -292,9 +324,9 @@ proc fig6d() {local i,n_f,n_s,logfmin,logfmax,logres,i50,percent,ret,exitcode lo
 		i50=whereis(recordingSite[i],recordingSite[i].x(0)/2.0)
 		f50.x(i)=10^(logfmin+i50*logres)
 		percent = int(i/pathList.count()*100)
-		if (verbose) print percent, "% done"
+		if (verbose) printf("%d %% done\r", percent)
 	}
-
+        if (verbose) print ""
 	// write to files:
 
 	wopen(atten_path)
@@ -325,6 +357,11 @@ proc fig6d() {local i,n_f,n_s,logfmin,logfmax,logres,i50,percent,ret,exitcode lo
 proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj distalSynapse,ppmd,pathList
 	// attenuation of EPSPs evoked by a single distal synapse
 
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	tstop=40
 
 	hbox = new HBox()
@@ -337,7 +374,7 @@ proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj dis
 
 	// plot some of the epsps:
 	// copied from stdrun.hoc:	
-	newPlot(0,tstop,0,20)
+	newPlot(0,tstop,v_init,v_init+20)
 	graphItem.save_name("graphList[0].")
 	graphList[0].append(graphItem)
 	graphItem.exec_menu("Keep Lines")
@@ -391,6 +428,7 @@ proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj dis
 
 	// run:
 	if (verbose) print "Running simulation..."
+        
 	finitialize(v_init)
 	run()
 	if (verbose) print "done"
@@ -398,7 +436,7 @@ proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj dis
 	max_epsp = -1	
 	max_epsp_x = new Vector(pathList.count())
 	for i=0,pathList.count()-1 {
-		max_epsp_x.x[i] = recordingSite[i].max()
+		max_epsp_x.x[i] = recordingSite[i].max()-v_init
 		if (max_epsp <= max_epsp_x.x[i]) {
 			max_epsp = max_epsp_x.x[i]
 		}
@@ -416,6 +454,11 @@ proc fig7ab() {local i,maxLength,synLength,L50,L50neg,dist,max_epsp localobj dis
 }
 
 proc fig7ac() {local i,maxLength,L50,dist,synStep localobj movingSynapse,ppmd,pathList
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	// Somatic EPSP amplitude vs. synapse location
 
 	tstop = 40
@@ -429,7 +472,7 @@ proc fig7ac() {local i,maxLength,L50,dist,synStep localobj movingSynapse,ppmd,pa
 	s = new Shape()
 
 	// plot epsps (copied from stdrun.hoc):
-	newPlot(0,tstop,0,3)
+	newPlot(0,tstop,v_init,v_init+3)
 	graphItem.save_name("graphList[0].")
 	graphList[0].append(graphItem)
 	graphItem.exec_menu("Keep Lines")
@@ -482,7 +525,7 @@ proc fig7ac() {local i,maxLength,L50,dist,synStep localobj movingSynapse,ppmd,pa
 			finitialize(v_init)
 			run()
 			s.exec_menu("View = plot")
-			max_epsp = recordingSite[0].max()
+			max_epsp = recordingSite[0].max()-v_init
 			recordingSite[0].play_remove() // don't know if this is really needed here
 			dist = pathList.o(i).distToRootCenter
 			g.plot(dist)
@@ -496,6 +539,11 @@ proc fig7ac() {local i,maxLength,L50,dist,synStep localobj movingSynapse,ppmd,pa
 }
 
 proc fig7de() {local neckStep,l_neck localobj spineSynapse
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	// EPSP amplitudes vs. spine neck length
 
 	tstop=20
@@ -518,7 +566,7 @@ proc fig7de() {local neckStep,l_neck localobj spineSynapse
 	s = new Shape()
 
 	// plot epsps (copied from stdrun.hoc):
-	newPlot(0,tstop,0,14)
+	newPlot(0,tstop,v_init,v_init+14)
 	graphItem.save_name("graphList[0].")
 	graphList[0].append(graphItem)
 	graphItem.exec_menu("Keep Lines")
@@ -565,8 +613,8 @@ proc fig7de() {local neckStep,l_neck localobj spineSynapse
 		graphItem.addexpr("","spine[1].v(1)",2,1)
 		finitialize(v_init)
 		run()
-		spine_epsp = recordingSite[0].max()
-		shaft_epsp = recordingSite[1].max()
+		spine_epsp = recordingSite[0].max()-v_init
+		shaft_epsp = recordingSite[1].max()-v_init
 		g.plot(l_neck)
 		g.fastflush()
 	}
@@ -581,6 +629,11 @@ proc fig7de() {local neckStep,l_neck localobj spineSynapse
 }
 
 proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synapse1,synapse2
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	// local EPSP summation window
 
 	tstop=210
@@ -600,7 +653,7 @@ proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synap
 	s.point_mark(synapse1,2)
 
 	// plot epsps (copied from stdrun.hoc):
-	newPlot(0,tstop,0,30)
+	newPlot(0,tstop,v_init,v_init+30)
 	graphItem.save_name("graphList[0].")
 	graphList[0].append(graphItem)
 	graphItem.exec_menu("Keep Lines")
@@ -644,7 +697,7 @@ proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synap
 	tstop = 50
 	finitialize(v_init)
 	run()
-	single_epsp = recordingSite[0].max()
+	single_epsp = recordingSite[0].max()-v_init
 	tstop = tstop_old	
 	for (onset=0; onset <= 200 && breakall == 0; onset += timeStep) {
 		synapse1.onset = onset
@@ -663,7 +716,7 @@ proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synap
 		finitialize(v_init)
 		run()
 		s.exec_menu("View = plot")
-		delta_epsp = recordingSite[0].max()-single_epsp
+		delta_epsp = recordingSite[0].max()-v_init-single_epsp
 		g.plot(delta_t)
 		g.fastflush()
 	}
@@ -679,6 +732,11 @@ proc fig8ab() {local timeStep,tstop_old,single_epsp,onset,delta_t localobj synap
 }
 
 proc fig8cd() {local i,maxLength1,maxLength2,synLength1,synLength2,max_epsp localobj terminalList,pathList1,pathList2
+	if (strcmp(cell_name, "cell_11") == 0) {
+            v_init = actCell.Vrest
+	} else {
+            v_init = 0
+	}
 	// attenuation of distributed synaptic input
 	tstop=40
 
@@ -702,7 +760,7 @@ proc fig8cd() {local i,maxLength1,maxLength2,synLength1,synLength2,max_epsp loca
 
 	// plot epsps
 	// copied from stdrun.hoc:	
-	newPlot(0,tstop,0,3)
+	newPlot(0,tstop,v_init,v_init+3)
 	graphItem.save_name("graphList[0].")
 	graphList[0].append(graphItem)
 	graphItem.exec_menu("Keep Lines")
@@ -768,7 +826,7 @@ proc fig8cd() {local i,maxLength1,maxLength2,synLength1,synLength2,max_epsp loca
 	max_epsp_x = new Vector(pathList1.count())
 	max_epsp = -1	
 	for i=0,pathList1.count()-1 {
-		max_epsp_x.x[i] = recording1[i].max()
+		max_epsp_x.x[i] = recording1[i].max()-v_init
 		if (max_epsp <= max_epsp_x.x[i]) {
 			max_epsp = max_epsp_x.x[i]
 		}
@@ -782,7 +840,7 @@ proc fig8cd() {local i,maxLength1,maxLength2,synLength1,synLength2,max_epsp loca
 	max_epsp_x = new Vector(pathList2.count())
 	max_epsp = -1	
 	for i=0,pathList2.count()-1 {
-		max_epsp_x.x[i] = recording2[i].max()
+		max_epsp_x.x[i] = recording2[i].max()-v_init
 		if (max_epsp <= max_epsp_x.x[i]) {
 			max_epsp = max_epsp_x.x[i]
 		}
@@ -828,8 +886,9 @@ proc f50Attenuation() {local i,sumAtten,logfmin,logfmax,logres,vecSize,i50,f50 l
 	for i=0, terminalList.count()-1 terminalList.o(i).sec {
 		imp.loc(1.0)
 		sumVec.add(freqVec(logfmin,logfmax,logres))
-		if (verbose) print int((i+1)/terminalList.count()*100),"% done"
+		if (verbose) printf("%d %% done\r", int((i+1)/terminalList.count()*100))
 	}
+        if (verbose) print ""
 
 	// get the average:
 	sumVec.div(terminalList.count())

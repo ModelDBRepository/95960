@@ -43,3 +43,13 @@ Description of files:
 
 20071005
 Cell templates now adhere to the "NetworkReadyCell" syntax - fixed some minor bugs. Schmidt-Hieber.
+
+20170328
+* Added a new cell (cell_9) and an artificial cell (cell_10) that were not
+  part of the original 2007 publication.
+* Added CA1 PC model (cell_11) for consistency. See
+  Golding NL, Mickus TJ, Katz Y, Kath WL, Spruston N (2005)
+  Factors mediating powerful voltage attenuation along CA1 pyramidal neuron
+  dendrites. J Physiol 568:69-82.
+  To run the original simulations as shown in the paper, use the original model from
+  https://www.janelia.org/sites/default/files/Attenuation.zip

@@ -1,0 +1,553 @@
+// ----------------------------------------------------------------------------
+// membrane.hoc
+// loads the full cell morphology, inserts passive
+// membrane properties, corrects membrane resistance
+// and capacitance for spines, and corrects (roughly) 
+// for temperature if needed
+//
+// 2007-08-17, Christoph Schmidt-Hieber, University of Freiburg
+//
+// accompanies the publication:
+// Schmidt-Hieber C, Jonas P, Bischofberger J (2007)
+// Subthreshold Dendritic Signal Processing and Coincidence Detection 
+// in Dentate Gyrus Granule Cells. J Neurosci 27:8430-8441
+//
+// send bug reports and suggestions to christoph.schmidt-hieber@uni-freiburg.de
+//
+// 2007-08-31: adheres to NetworkReadyCell policy
+// 2017-03-26: Added Golding et al. (2005) CA1 pyramidal cell
+// Golding NL, Mickus TJ, Katz Y, Kath WL, Spruston N (2005)
+// Factors mediating powerful voltage attenuation along CA1 pyramidal neuron
+// dendrites. J Physiol 568:69-82.
+// Downloaded from http://www.northwestern.edu/neurobiology/faculty/ spruston/sk_models/JP_2005/Attenuation.zip
+// ----------------------------------------------------------------------------
+
+// load gui or stdrun:
+load_file("stdrun.hoc")
+
+load_file("./../share/genutils.hoc")
+load_file("./../share/calcSpines.hoc")
+load_file("./../share/fixnseg.hoc")
+
+begintemplate cell_11
+
+public is_art, art_axon
+public init, topol, basic_shape, subsets, geom, biophys, geom_nseg, biophys_inhomo
+public synlist, x, y, z, position, connect2target
+public somaLoc,somaBorderLoc,blebLoc,distalDendLoc,proxDendLoc,synDendLoc,spineCount,n_sections,n_axon
+public section
+public all,den,axo
+public Vrest
+
+external verbose,debug_mode,accuracy,calc_spines
+external q10_cm,q10_g_pas,q10_Ra,tempScale,geom_nseg_shared,lambda_f
+
+objref somaLoc,somaBorderLoc,blebLoc,distalDendLoc,proxDendLoc,synDendLoc,spineCount,this,synlist
+objref all,den,axo
+objref primary_apical_list
+objref nospines
+objref basal_list
+objref apical_list
+objref basals
+objref med_spines_rad
+objref med_spines_LM
+objref max_spines_rad
+objref thin_rad
+objref thin_LM
+
+proc init() {
+    topol()
+    if (debug_mode) print "Loaded cell, n_sections=",n_sections
+    subsets()
+    geom()
+    biophys()
+    geom_nseg()
+    synlist = new List()
+    synapses()
+    x = y = z = 0 // only change via position
+}
+
+// dummy compartments, will be updated later:
+create section[1]
+
+proc init_spines() {
+    forall { insert spines scale_spines=1.0 }
+    forsec nospines 		{ scale_spines=1.0 }
+    forsec basals 			{ scale_spines=2.7 }
+    forsec med_spines_rad 	{ scale_spines=1.2 }
+    forsec max_spines_rad 	{ scale_spines=1.6 }
+    forsec thin_rad 		{ scale_spines=2.6 }
+    forsec med_spines_LM 	{ scale_spines=1.1 }
+    forsec thin_LM 			{ scale_spines=1.2 }
+}
+
+proc init_pas() {local global_ra, Cm, Rm, rmsoma, Vleak, nablock, target, ipass, init_h, rmend, rmhalfdis, rmsteep, dis
+    global_ra=139.09	// internal resistivity in ohm-cm
+    Cm=1.70944          // specific membrane capacitance in uF/cm^2
+    Rm=16428.5    	    // specific membrane resistivity in ohm-cm^2  get this from fit of tau_m, assuming Cm=1
+    rmsoma=Rm
+    Vleak=-72			// leak reversal
+    Vrest=-72			// resting potential -63 in control
+    nablock=1     	 	// fraction of na current blocked by TTX
+    target=59.42      	// input resistance target in CsCl
+    ipass=2						// =1 for uniform Rm, =2 for nonuniform Rm
+    init_h=5					// =1 for uniform Ih, =2 for nonuniform Ih
+    hblock=0					// between 0 and 1, for fraction blocked. use as 0 or 1
+    // attenuation is 0.515 in CsCl for this cell
+    // passive membrane parameters determined by fitting Cs data
+    if (ipass>1) {
+	// nonuniform Rm values
+	global_ra=139.09
+	rmsoma=74697
+	rmend=10216
+	rmhalfdis=115.07
+	rmsteep=20
+	Cm=2.015
+    }
+    if ((ipass==2) && (init_h==5) && (hblock<1)) {
+	// nonuniform Rm and nonuniform gh
+        if (celsius > 30) {
+	    Vrest=-63
+        } else {
+	    Vrest=-66.4
+        }
+	minq=0.1002 		// units are pS/um2
+	maxq=14.349 		// units are pS/um2
+	qhalfdis=216.65
+	qsteep=79.4
+	erevh_h=-25
+	zeta_h=7
+	a0_h=0.0019366
+	qten_h=4.5
+    }
+    print "Inserting passive membrane"
+    forall {insert pas Ra=global_ra e_pas=Vleak}
+    forall {insert dv}
+    if (ipass==1) {
+    	Rm=rmsoma
+    	forall { g_pas=1/(Rm/scale_spines) cm=Cm*scale_spines Ra = global_ra }
+    }
+    if (ipass==2) {
+    	somaLoc.secRef.sec distance()
+    	printf("rmsoma = %3.0f, rmend = %3.0f, rmsteep = %3.0f\n",rmsoma, rmend, rmsteep)
+    	forall{
+    	    dis=distance(0.5)
+    	    rmpoint=rmend+(rmsoma-rmend)/(1+exp((dis-rmhalfdis)/rmsteep))
+    	    { g_pas=1/(rmpoint/scale_spines) cm=Cm*scale_spines Ra = global_ra }
+    	}
+    }
+    v_init = Vrest
+    insert_h()			// insert h conductance
+}   
+
+proc insert_h() {
+    printf("Inserting sag conductance in all segments: %d pecent blocked\n",hblock*100)
+    forall { insert h gbar_h=0 }
+    init_h5(a0_h*1000)	// initialize nonuniform Rm, nonuniform Ih
+}
+    
+proc init_h5() {local dis, hpoint
+    // scale up sag conductance as a sigmoidal function of distance from the soma
+    // q=minq+(maxq-minq)/(1+exp((-dis-qhalfdis)/qsteep))
+    // basals are set to the same value as the soma
+    // set minq, maxq, and qhalfdis and qsteep in init_params
+    a0_h=$1/1000
+    somaLoc.secRef.sec distance()
+    forall{
+	dis=distance(0.5)
+	hpoint=minq+(maxq-minq)/(1+exp(-(dis-qhalfdis)/qsteep))
+	{ gbar_h=hpoint*scale_spines*(1-hblock) }
+    }
+    forsec basals{
+	{ gbar_h=minq*scale_spines*(1-hblock) }	
+    }
+}
+
+proc basic_shape() {localobj morphoFile
+    n_sections = 154
+    n_axon = 0
+    create section[n_sections]
+    xopen("./cell_11/ri06.nrn")			// geometry
+    // define soma:
+    section[0]  somaLoc = new Location(0.5)
+    section[0]  somaBorderLoc = new Location(0)
+    // define dendritic sites:
+    section[152] distalDendLoc = new Location(0.0)
+    section[72] proxDendLoc = new Location(0.05)
+    section[152] synDendLoc = new Location(0.0)
+    access somaLoc.secRef.sec
+}
+
+proc topol() {
+    basic_shape()
+    {section[0] connect section[1](0), 1.000000}
+    {section[1] connect section[6](0), 1}
+    {section[1] connect section[7](0), 1}
+    {section[7] connect section[15](0), 1}
+    {section[15] connect section[28](0), 1}
+    {section[28] connect section[48](0), 1}
+    {section[28] connect section[49](0), 1}
+    {section[15] connect section[29](0), 1}
+    {section[29] connect section[50](0), 1}
+    {section[29] connect section[51](0), 1}
+    {section[7] connect section[16](0), 1}
+    {section[16] connect section[30](0), 1}
+    {section[30] connect section[52](0), 1}
+    {section[30] connect section[53](0), 1}
+    {section[16] connect section[31](0), 1}
+    {section[0] connect section[2](0), 0.709232}
+    {section[2] connect section[8](0), 1}
+    {section[2] connect section[9](0), 1}
+    {section[9] connect section[17](0), 1}
+    {section[17] connect section[32](0), 1}
+    {section[32] connect section[54](0), 1}
+    {section[32] connect section[55](0), 1}
+    {section[17] connect section[33](0), 1}
+    {section[33] connect section[56](0), 1}
+    {section[56] connect section[72](0), 1}
+    {section[56] connect section[73](0), 1}
+    {section[73] connect section[84](0), 1}
+    {section[84] connect section[96](0), 1}
+    {section[84] connect section[97](0), 1}
+    {section[73] connect section[85](0), 1}
+    {section[33] connect section[57](0), 1}
+    {section[57] connect section[74](0), 1}
+    {section[57] connect section[75](0), 1}
+    {section[75] connect section[86](0), 1}
+    {section[75] connect section[87](0), 1}
+    {section[9] connect section[19](0), 1}
+    {section[19] connect section[34](0), 1}
+    {section[34] connect section[58](0), 1}
+    {section[34] connect section[59](0), 1}
+    {section[19] connect section[35](0), 1}
+    {section[35] connect section[60](0), 1}
+    {section[35] connect section[61](0), 1}
+    {section[61] connect section[76](0), 1}
+    {section[61] connect section[77](0), 1}
+    {section[77] connect section[88](0), 1}
+    {section[77] connect section[89](0), 1}
+    {section[0] connect section[3](0), 0.443475}
+    {section[3] connect section[10](0), 1}
+    {section[10] connect section[20](0), 1}
+    {section[10] connect section[21](0), 1}
+    {section[21] connect section[36](0), 1}
+    {section[21] connect section[37](0), 1}
+    {section[37] connect section[62](0), 1}
+    {section[37] connect section[63](0), 1}
+    {section[3] connect section[18](0), 1}
+    {section[18] connect section[22](0), 1}
+    {section[22] connect section[38](0), 1}
+    {section[22] connect section[39](0), 1}
+    {section[18] connect section[23](0), 1}
+    {section[23] connect section[40](0), 1}
+    {section[23] connect section[41](0), 1}
+    {section[0] connect section[4](0), 1.000000}
+    {section[4] connect section[11](0), 1}
+    {section[4] connect section[12](0), 1}
+    {section[12] connect section[24](0), 1}
+    {section[12] connect section[25](0), 1}
+    {section[25] connect section[42](0), 1}
+    {section[42] connect section[64](0), 1}
+    {section[42] connect section[65](0), 1}
+    {section[25] connect section[43](0), 1}
+    {section[43] connect section[66](0), 1}
+    {section[66] connect section[78](0), 1}
+    {section[66] connect section[79](0), 1}
+    {section[43] connect section[67](0), 1}
+    {section[0] connect section[5](0), 0.000000}
+    {section[5] connect section[13](0), 1}
+    {section[5] connect section[14](0), 1}
+    {section[14] connect section[26](0), 1}
+    {section[26] connect section[44](0), 1}
+    {section[26] connect section[45](0), 1}
+    {section[14] connect section[27](0), 1}
+    {section[27] connect section[46](0), 1}
+    {section[46] connect section[68](0), 1}
+    {section[46] connect section[69](0), 1}
+    {section[69] connect section[80](0), 1}
+    {section[69] connect section[81](0), 1}
+    {section[81] connect section[90](0), 1}
+    {section[81] connect section[91](0), 1}
+    {section[27] connect section[47](0), 1}
+    {section[47] connect section[70](0), 1}
+    {section[47] connect section[71](0), 1}
+    {section[71] connect section[82](0), 1}
+    {section[82] connect section[92](0), 1}
+    {section[82] connect section[93](0), 1}
+    {section[71] connect section[83](0), 1}
+    {section[83] connect section[94](0), 1}
+    {section[94] connect section[98](0), 1}
+    {section[94] connect section[99](0), 1}
+    {section[99] connect section[102](0), 1}
+    {section[99] connect section[104](0), 1}
+    {section[104] connect section[107](0), 1}
+    {section[104] connect section[108](0), 1}
+    {section[83] connect section[95](0), 1}
+    {section[95] connect section[100](0), 1}
+    {section[95] connect section[101](0), 1}
+    {section[101] connect section[105](0), 1}
+    {section[101] connect section[103](0), 1}
+    {section[103] connect section[109](0), 1}
+    {section[109] connect section[110](0), 1}
+    {section[109] connect section[153](0), 1}
+    {section[103] connect section[106](0), 1}
+    {section[106] connect section[111](0), 1}
+    {section[106] connect section[112](0), 1}
+    {section[112] connect section[113](0), 1}
+    {section[112] connect section[114](0), 1}
+    {section[114] connect section[115](0), 1}
+    {section[115] connect section[117](0), 1}
+    {section[115] connect section[118](0), 1}
+    {section[114] connect section[116](0), 1}
+    {section[116] connect section[119](0), 1}
+    {section[119] connect section[121](0), 1}
+    {section[119] connect section[122](0), 1}
+    {section[122] connect section[125](0), 1}
+    {section[125] connect section[128](0), 1}
+    {section[125] connect section[129](0), 1}
+    {section[122] connect section[130](0), 1}
+    {section[116] connect section[120](0), 1}
+    {section[120] connect section[123](0), 1}
+    {section[120] connect section[124](0), 1}
+    {section[124] connect section[126](0), 1}
+    {section[124] connect section[127](0), 1}
+    {section[127] connect section[131](0), 1}
+    {section[127] connect section[132](0), 1}
+    {section[132] connect section[133](0), 1}
+    {section[133] connect section[135](0), 1}
+    {section[133] connect section[136](0), 1}
+    {section[136] connect section[139](0), 1}
+    {section[136] connect section[140](0), 1}
+    {section[140] connect section[143](0), 1}
+    {section[140] connect section[144](0), 1}
+    {section[132] connect section[134](0), 1}
+    {section[134] connect section[137](0), 1}
+    {section[134] connect section[138](0), 1}
+    {section[138] connect section[141](0), 1}
+    {section[141] connect section[145](0), 1}
+    {section[141] connect section[146](0), 1}
+    {section[146] connect section[149](0), 1}
+    {section[146] connect section[150](0), 1}
+    {section[138] connect section[142](0), 1}
+    {section[142] connect section[147](0), 1}
+    {section[142] connect section[148](0), 1}
+    {section[148] connect section[151](0), 1}
+    {section[148] connect section[152](0), 1}
+}
+
+proc subsets() { local i
+    objref all,den,axo
+    objref primary_apical_list
+    objref nospines
+    objref basal_list
+    objref apical_list
+    objref basals
+    objref med_spines_rad
+    objref med_spines_LM
+    objref max_spines_rad
+    objref thin_rad
+    objref thin_LM
+    primary_apical_list = new SectionList()
+    section[0] primary_apical_list.append
+    section[5] primary_apical_list.append 
+    section[14] primary_apical_list.append 
+    section[27] primary_apical_list.append 
+    section[47] primary_apical_list.append 
+    section[71] primary_apical_list.append 
+    section[83] primary_apical_list.append 
+    section[95] primary_apical_list.append 
+    section[101] primary_apical_list.append 
+    section[103] primary_apical_list.append 
+    section[106] primary_apical_list.append 
+    section[112] primary_apical_list.append 
+    section[114] primary_apical_list.append 
+    section[116] primary_apical_list.append 
+    section[120] primary_apical_list.append 
+    section[124] primary_apical_list.append 
+    section[127] primary_apical_list.append 
+    section[132] primary_apical_list.append 
+
+    nospines = new SectionList()
+    section[1] nospines.append()
+    section[7] nospines.append()
+    section[15] nospines.append()
+    section[2] nospines.append()
+    section[9] nospines.append()
+    section[17] nospines.append()
+    section[3] nospines.append()
+    section[10] nospines.append()
+    section[18] nospines.append()
+    section[4] nospines.append()
+    section[5] nospines.append() 
+    section[14] nospines.append() 
+    section[27] nospines.append() 
+
+    basal_list = new SectionList()
+    section[1] basal_list.append()
+    section[7] basal_list.append()
+    section[15] basal_list.append()
+    section[2] basal_list.append()
+    section[9] basal_list.append()
+    section[17] basal_list.append()
+    section[3] basal_list.append()
+    section[10] basal_list.append()
+    section[18] basal_list.append()
+    section[4] basal_list.append()
+
+    apical_list = new SectionList()
+    section[5] apical_list.append() 
+    section[14] apical_list.append() 
+    section[27] apical_list.append() 
+
+    basals = new SectionList()
+    access section[1]
+    basals.subtree()
+    access section[2]
+    basals.subtree()
+    access section[3]
+    basals.subtree()
+    access section[4]
+    basals.subtree()
+    section[1] basals.remove()
+    section[7] basals.remove()
+    section[15] basals.remove()
+    section[2] basals.remove()
+    section[9] basals.remove()
+    section[17] basals.remove()
+    section[3] basals.remove()
+    section[10] basals.remove()
+    section[18] basals.remove()
+    section[4] basals.remove()
+
+    med_spines_rad = new SectionList()
+    section[47] med_spines_rad.append()		//medium spiny
+    section[71] med_spines_rad.append()		//medium spiny 
+    section[83] med_spines_rad.append()		//medium spiny
+    section[95] med_spines_rad.append()		//medium spiny 
+    section[101] med_spines_rad.append()		//medium spiny 
+    section[103] med_spines_rad.append()		//medium spiny 
+    section[106] med_spines_rad.append()		//medium spiny
+    section[112] med_spines_rad.append()		//medium spiny
+    section[114] med_spines_rad.append()		//medium spiny
+
+    med_spines_LM = new SectionList()
+    section[138] med_spines_LM.append()	//medium spiny
+    section[133] med_spines_LM.append()	//medium spiny
+
+    max_spines_rad = new SectionList()
+    section[116] max_spines_rad.append()		//very spiny
+    section[120] max_spines_rad.append()		//very spiny
+    section[124] max_spines_rad.append()		//very spiny
+    section[127] max_spines_rad.append()		//very spiny 
+    section[132] max_spines_rad.append()	//very spiny
+    section[134] max_spines_rad.append()	//very spiny
+
+    thin_rad = new SectionList()
+    access section[5]
+    thin_rad.subtree()
+    section[5] thin_rad.remove()
+    section[14] thin_rad.remove() 
+    section[27] thin_rad.remove()
+    section[47] thin_rad.remove()		//medium spiny
+    section[71] thin_rad.remove()		//medium spiny 
+    section[83] thin_rad.remove()		//medium spiny
+    section[95] thin_rad.remove()		//medium spiny 
+    section[101] thin_rad.remove()	//medium spiny 
+    section[103] thin_rad.remove()		//medium spiny 
+    section[106] thin_rad.remove()		//medium spiny
+    section[112] thin_rad.remove()		//medium spiny
+    section[114] thin_rad.remove()	//medium spiny
+    section[116] thin_rad.remove()		//very spiny
+    section[120] thin_rad.remove()		//very spiny
+    section[124] thin_rad.remove()		//very spiny
+    section[127] thin_rad.remove()		//very spiny 
+    section[132] thin_rad.remove()	//very spiny
+    section[134] thin_rad.remove()	//very spiny
+    section[138] thin_rad.remove()	//medium spiny
+    section[133] thin_rad.remove()	//medium spiny
+    section[131] thin_rad.remove()
+    section[137] thin_rad.remove()
+    section[141] thin_rad.remove()
+    section[145] thin_rad.remove()
+    section[146] thin_rad.remove()
+    section[149] thin_rad.remove()
+    section[150] thin_rad.remove()
+    section[142] thin_rad.remove()
+    section[147] thin_rad.remove()
+    section[148] thin_rad.remove()
+    section[151] thin_rad.remove()
+    section[152] thin_rad.remove()
+    section[135] thin_rad.remove()
+    section[136] thin_rad.remove()
+    section[139] thin_rad.remove()
+    section[140] thin_rad.remove()
+    section[143] thin_rad.remove()
+    section[144] thin_rad.remove()
+
+    thin_LM = new SectionList()
+    section[131] thin_LM.append()
+    section[137] thin_LM.append()
+    section[141] thin_LM.append()
+    section[145] thin_LM.append()
+    section[146] thin_LM.append()
+    section[149] thin_LM.append()
+    section[150] thin_LM.append()
+    section[142] thin_LM.append()
+    section[147] thin_LM.append()
+    section[148] thin_LM.append()
+    section[151] thin_LM.append()
+    section[152] thin_LM.append()
+    section[135] thin_LM.append()
+    section[136] thin_LM.append()
+    section[139] thin_LM.append()
+    section[140] thin_LM.append()
+    section[143] thin_LM.append()
+    section[144] thin_LM.append()
+    
+    all = new SectionList()
+    for i=0, n_sections-1 section[i] all.append()
+    den = new SectionList()
+    for i=1, n_sections-1 section[i] den.append()
+    axo = new SectionList()
+}
+
+proc geom() {
+}
+
+proc geom_nseg() {
+    geom_nseg_shared()
+    // increase nseg even further (tribute to Josef):
+    if (accuracy >= 1) {
+        forall nseg*=3
+    }
+}
+
+proc biophys() {
+    init_spines()
+    init_pas()
+}
+
+proc biophys_inhomo(){}
+
+proc position() { local i
+  somaLoc.secRef.sec for i = 0, n3d()-1 {
+    pt3dchange(i, $1-x+x3d(i), $2-y+y3d(i), $3-z+z3d(i), diam3d(i))
+  }
+  x = $1  y = $2  z = $3
+}
+
+obfunc connect2target() {localobj nc //$o1 target point process, optional $o2 returned NetCon
+  somaLoc.secRef.sec nc = new NetCon(&v(1), $o1)
+  nc.threshold = 10
+  if (numarg() == 2) { $o2 = nc } // for backward compatibility
+  return nc
+}
+
+objref syn_
+proc synapses() {
+}
+
+func is_art() { return 0 }
+
+endtemplate cell_11
+

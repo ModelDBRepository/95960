@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 
 strdef cell_name,h_cell_name,path_name,cellno,cmd
-ncells = 8
+ncells = 11
 objref actCell
 curCellIndex = -1
 defaultCellIndex = 6
@@ -183,6 +183,10 @@ proc morpho_info() {local totalArea, totalAreaShaft, n_spines, secAreaShaft
 		print "Total cell surface area without spines: ", totalAreaShaft,"um^2"
 		print "Total cell surface area including spines: ", totalArea,"um^2"
 		print "Area factor: ", totalArea / totalAreaShaft
+		if (strcmp(cell_name, "cell_11") == 0) {
+		    print "Adopted from Golding NL, Mickus TJ, Katz Y, Kath WL, Spruston N (2005)"
+		    print "J Physiol 568:69-82"
+		}
 		print "------------------------------------------------------------------"
 	}	
 }

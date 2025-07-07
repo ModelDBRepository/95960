@@ -104,6 +104,5 @@ Cell templates now adhere to the "NetworkReadyCell" syntax - fixed some minor bu
   To run the original simulations as shown in the paper, use the original model from  
   [https://www.janelia.org/sites/default/files/Attenuation.zip](https://www.janelia.org/sites/default/files/Attenuation.zip)
 
----
-
-2025-07-07: Converted README to Markdown.
+20250707  
+Converted README to Markdown.
